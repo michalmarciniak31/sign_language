@@ -4,9 +4,9 @@ import tensorflow as tf
 import numpy as np
 import os
 import random
-from tensorflow.keras.layers import Input, Dense, Dropout
+from tensorflow.keras.layers import Input, Dense, Dropout, GlobalAveragePooling2D
 from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.applications import ResNet50
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.losses import Huber
 from tensorflow.keras.optimizers import Adam
@@ -43,44 +43,39 @@ for i in range(len(K)):
 
 
 img_height, img_width = 224, 224
+n_outputs = 42  # 21 punktów * 2 współrzędne
+dropout_rate = 0.4
 learning_rate = 1e-4
-dropout_rate = 0.3
-n_outputs = 42  # 21 punktów * 2 (x, y)
 
 # Wejście: obraz RGB
 image_input = Input(shape=(img_height, img_width, 3), name='image_input')
-cnn_base = MobileNetV2(include_top=False, input_shape=(img_height, img_width, 3), pooling='avg')
-cnn_features = cnn_base(image_input)
 
-# Dodanie Dense + Dropout
-x = Dense(512, activation='relu')(cnn_features)
+# ResNet50 bez górnych warstw (include_top=False)
+base_model = ResNet50(include_top=False, input_tensor=image_input, weights='imagenet')
+
+# Global Average Pooling na końcu ResNet
+x = GlobalAveragePooling2D()(base_model.output)
+
+# Warstwy gęste + dropout
+x = Dense(512, activation='relu')(x)
 x = Dropout(dropout_rate)(x)
 x = Dense(256, activation='relu')(x)
 x = Dropout(dropout_rate)(x)
 x = Dense(128, activation='relu')(x)
 
 # Wyjście: landmarki
-landmark_output = Dense(n_outputs, activation='linear', name='landmark_output')(x)
+landmark_output = Dense(n_outputs, activation='sigmoid', name='landmark_output')(x)
 
-# Budowa modelu
+# Zbudowanie modelu
 model = Model(inputs=image_input, outputs=landmark_output)
 
-# Kompilacja modelu
+# Kompilacja
 optimizer = Adam(learning_rate=learning_rate)
-loss = Huber(delta=10.0)  # bardziej odporny na outliery
+loss = 'mse'
 
 model.compile(optimizer=optimizer, loss=loss, metrics=['mae'])
 
 model.summary()
-
-# EarlyStopping
-early_stop = EarlyStopping(
-    monitor='val_loss',
-    patience=10,
-    restore_best_weights=True,
-    verbose=1
-)
-
 # Trening modelu
 
 def load_dataset(image_paths, landmark_data, img_size=(224,224)):
@@ -102,7 +97,7 @@ img_pth = []
 for i in os.listdir(r'C:\Users\pichc\Downloads\FreiHAND_pub_v2\training\rgb'):
     img_pth.append(os.path.join(r'C:\Users\pichc\Downloads\FreiHAND_pub_v2\training\rgb', i))
 
-final_images, final_landmarks = load_dataset(img_pth[:5000], landmarks[:5000])
+final_images, final_landmarks = load_dataset(img_pth[:32560], landmarks[:32560])
 
 history = model.fit(
     final_images,
@@ -110,7 +105,6 @@ history = model.fit(
     validation_split=0.2,
     epochs=64,
     batch_size=64,
-    callbacks=[early_stop]
 )
 
 img_pth_rgb = []
